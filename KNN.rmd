@@ -1,0 +1,277 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+```{r}
+# Loading the packages in R
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(psych)
+library(corrplot)
+library(RColorBrewer)
+```
+
+
+1.Load the dataset, directly from the URL, into your R environment. Explore the data, i.e. view
+the dimensions, the distribution, summary statistics, check for missing values, outliers, correlations
+etc. (show supporting visualizations). Note: after performing data exploration, if you decide to omit
+any variables, ensure that you provide an explanation. 
+```{r}
+# Loading the csv file directly from the url
+forest <- read.csv("http://www3.dsi.uminho.pt/pcortez/forestfires/forestfires.csv",
+              header = TRUE)
+head(forest)
+```
+From the summary statistics we can see that all the variables have different min and max values and needs to be standardized to get an accurate knn model.
+```{r}
+# Summary statistics of the data
+summary(forest)
+```
+The dimensions of the data set: 517 observations(rows) and 13 variables (columns)
+```{r}
+# DImension of the data
+dim(forest)
+```
+There are no missing values in the data set
+```{r}
+# Missing value of the data
+colSums(is.na(forest))
+
+```
+
+```{r}
+# Converting month and days to factors
+forest$month <- factor(forest$month, levels = c("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"), labels = 1:12 )
+
+forest$day <- factor(forest$day , levels = c("mon","tue","wed","thu","fri","sat","sun"), labels = 1:7)
+head(forest)
+```
+From the boxplots we can see that there are outliers in the following variables:  \
+1) Y (both sides) 2) FFMC 3) DMC 4) ISI 5) temp and 6)RH
+```{r}
+# Boxplot fo numeric variables to detect the outliers
+for_plot <- forest %>% select(-month, - day)
+par(mfrow=c(3,4))
+for(i in 1:ncol(for_plot))
+{
+  plot1 <- boxplot(for_plot[,i] , main= paste0(names(for_plot[i])))
+  plot1
+}
+```
+From the distributions we can see that most of the variables are not normally distributed. The DC variables and temp show normal distribution. I'm avoiding the month and day column because they are categorical variable and with no distance measures and converting to numeric and using these variables for modelling can result in inaccurate assuptions while calculating Eucledian distances.
+```{r}
+# Histograms of numeric variables to check the distribution
+par(mfrow=c(3,4))
+for(i in 1:ncol(for_plot))
+{
+  plot1 <- hist(for_plot[,i] , main= paste0(names(forest[i])), xlab = paste0(names(forest[i])))
+  plot1
+}
+
+```
+From the correlation analysis we can see that there are no strong correlations between the exploratory variables and the response variables. There are 2 weak negative correlations (RH and rain). There are also few moderate multicolinearity between ISI and FFMC and DMC and DC.
+```{r}
+# Correlation analysis.
+M <-cor(for_plot)
+M
+corrplot(M, type="upper", order="hclust",col=brewer.pal(n=8, name="RdYlBu"))
+pairs.panels(forest)
+
+```
+
+2.Create a function called z_score_standardization in which you should define the logic to
+perform z-score standardization. In a new R chunk, standardize the explanatory variables using the
+aforementioned function. 
+```{r}
+mean(forest$FFMC)
+sd(forest$FFMC)
+
+z_score<- function(x)
+{
+  mean_x <- mean(x)
+  st_dev <- sd(x)
+  z_score <- (x - mean(x))/sd(x)
+}
+
+for( i in 1:(ncol(for_plot)-1))
+{
+  for_plot[,i] <- z_score(for_plot[,i])
+}
+for_plot
+
+```
+
+3. Implement the k-NN algorithm in R (do not use an implementation of k-NN from a package).
+Create a function with the following name and arguments: kNN-regression(data_train, label_train,
+data_test, k); data_train represents the explanatory variables from the training set and label_train
+represents the corresponding response variable for each observation in data_train i.e. it will contain
+the burned area of the forest. The data_test represents the observations from the test set and k is the
+selected value of k (i.e. the number of neighbors).
+```{r}
+
+## 90% of the sample size
+smp_size <- floor(0.90 * nrow(for_plot))
+
+## set the seed to make your partition reproducible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(for_plot)), size = smp_size)
+
+# The train data
+train <- for_plot[train_ind, ]
+# Test data
+test <- for_plot[-train_ind, ]
+
+nrow(train)
+nrow(test)
+
+```
+
+```{r}
+# storing the exploratory variables
+data_train <- train[1:10]
+head(data_train)
+
+# storing the response variable
+label_train <- train$area
+
+# Storing the exploratory of the test variable 
+data_test <- test[1:10]
+area <- test[11]
+head(data_test)
+
+# storing the labels of test variables
+label_test <- test$area
+```
+
+```{r}
+#Function to calculate distance between neighbors
+d <- function(p,q)
+{
+  x<-0
+  for(i in 1:length(p))
+  {
+    x <- x+(p[i]+q[i])^2
+  }
+  d <- sqrt(x)
+  return(d)
+}
+
+
+#Function to calculate neighbors
+neighbors <- function(train, u)
+{
+  m <- nrow(train)
+  ds <- numeric(m)
+  q <- as.numeric(u[c(1:10)])
+  for(i in 1:m)
+  {
+    p <- train[i,c(1:10)]
+    ds[i] <- d(p,q)
+  }
+  neighbors <- ds
+  return(neighbors)
+}
+
+
+#Function to calculate nearest neighbors
+k.closest <- function(neighbors, k)
+{
+  ordered.neigh <- order(as.data.frame(lapply(neighbors, unlist)))
+  k.closest <- ordered.neigh[1:k]
+}
+
+#Get mode from the nearest neighbors
+Med <- function(x)
+{
+  m <- median(x)
+}
+
+
+#knn function
+knn_regression <- function(train,label_train, u, k)
+{
+  nb <- neighbors(train, u)
+  f <- k.closest(nb,k)
+  knn<-Med(label_train[f])
+}
+
+k <- sqrt(nrow(data_train))
+
+n <- nrow(data_test)
+n
+
+predict <- numeric(n)
+
+for(i in 1:n)
+{
+  predict[i] <- knn_regression(data_train,label_train, as.vector(data_test[i, ]), k)
+}
+predict
+
+```
+
+4. Test your k-nn implementation (in a new R chunk).
+• Split the data in #2 above into training and testing sets; the percentage split is your decision.
+• Provide the corresponding data from the previous step to the kNN-regression function.
+Calculate the mean squared error (MSE) between the predictions (i.e the output from the function)
+and the labels from the test set. Comment on the accuracy of your model’s predictions. 
+```{r}
+# Making a data frame 
+prediction <- as.data.frame(predict)
+prediction
+
+# binding the area to the data frame of predictions
+data_area <- test %>% select(area)
+for_mse <- cbind(data_area, prediction)
+
+# Calculating the MSE value
+for_mse<- for_mse %>% mutate(SE = (area-predict)^2)
+for_mse
+
+# THE MSE value of the predictions
+print(paste("The mean of the squared error is:",mean(for_mse$SE)))
+
+```
+5. Determine an optimal value of k:
+• Provide all values between 3 and 33 inclusive as the value of k
+
+```{r}
+predict2 <- numeric(nrow(data_test))
+error_df <- numeric(nrow(data_test))
+mse <- numeric(16)
+
+area <- as.vector(for_mse$area)
+
+k=3
+for (j in 1:16){
+  for(i in 1:nrow(data_test)){
+   predict2[i] <- knn_regression(data_train, label_train, as.vector(data_test[i, ]), k)
+   error_df[i] <- (area[i] - predict2[i])^2
+  }
+  mse[j] <- mean(error_df)
+  k=k+2
+}
+
+p <- as.data.frame(mse)
+k_values <- seq.int(3,33,2)
+p$k <- as.factor(k_values)
+
+p
+
+```
+
+• Create a line chart and plot each value of k (from the previous step) on the x-axis and the
+corresponding MSE on the y-axis. Explain the chart and determine which value of k is more
+suitable and why. 
+```{r}
+library(ggplot2)
+
+ggplot(data = p, aes(x = k, y = mse, group=1)) + geom_line() #+ scale_x_continuous("k", labels = as.character(k), breaks = k)
+```
+The Y axis gives the Mean Squared error and X axis gives the values of k. From the graph and the previous dataframe, it is clearly evident that lowest value of error(1703.100) is when the value of k is 17. Thus k = 17 is the optimal value of k and the most suitable value.
